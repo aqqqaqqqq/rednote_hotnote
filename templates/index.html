@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>小红书热点监控工具</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<!-- 模态框：查看话题 + AI总结 -->
+<div class="modal fade" id="topicModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">话题内容</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+        </div>
+        <div class="modal-body">
+          <pre id="topicModalContent" style="white-space: pre-wrap;"></pre>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline-primary" onclick="aiSummary()">AI 总结</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+        </div>
+      </div>
+    </div>
+</div>  
+
+<body>
+<nav class="navbar navbar-dark bg-primary">
+    <div class="container">
+        <a class="navbar-brand" href="/">小红书热点监控工具</a>
+        <div>
+            <a href="/report" class="btn btn-light me-2">查看每日报告</a>
+            <button id="forceCrawlBtn" class="btn btn-warning">手动触发抓取</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container mt-5">
+    <h2>🔥 当前热点榜单</h2>
+    <p class="text-muted">
+        最后更新时间：{{ hot_data.update_time if hot_data else '暂无数据' }}
+    </p>
+
+    {% if hot_data and hot_data.topics %}
+        <div class="row row-cols-1 row-cols-md-2 g-4 mt-3">
+            {% for topic in hot_data.topics %}
+                <div class="col">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <span class="badge bg-danger me-2">#{{ topic.rank }}</span>
+                                {{ topic.title }}
+                            </h5>
+
+                            <p class="card-text mt-2">
+                                <strong>热度：</strong>
+                                <span class="text-danger">{{ topic.score }}</span>
+                                <br>
+
+                                <strong>标签：</strong>
+                                {% if topic.word_type and topic.word_type != "无" %}
+                                    <span class="badge bg-secondary">{{ topic.word_type }}</span>
+                                {% else %}
+                                    无
+                                {% endif %}
+                                <br>
+
+                                <strong>抓取时间：</strong>{{ topic.crawl_time }}
+                            </p>
+                        </div>
+
+                        <div class="card-footer text-end">
+                            <a href="javascript:void(0);" class="btn btn-sm btn-outline-success me-2" onclick="searchTopic('{{ topic.title }}')">
+                                🔍 检索话题
+                            </a>
+                            <a href="javascript:void(0);" class="btn btn-sm btn-outline-warning me-2" onclick="viewTopic('{{ topic.title }}')">
+                                👁 查看话题
+                            </a>
+                            <a href="{{ topic.link }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                查看小红书搜索结果
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="alert alert-info mt-3">
+            暂无热点数据，请等待定时抓取或手动触发抓取
+        </div>
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    let currentTopicContent = "";
+    let currentTopicTitle = "";
+</script>
+
+<script>
+    // 手动触发抓取
+    document.getElementById('forceCrawlBtn').addEventListener('click', async function () {
+        this.disabled = true;
+        this.innerHTML = '抓取中...';
+
+        try {
+            const response = await fetch('/api/force-crawl', { method: 'POST' });
+            const result = await response.json();
+
+            if (result.code === 200) {
+                alert('抓取成功！页面将刷新');
+                window.location.reload();
+            } else {
+                alert('抓取失败：' + result.msg);
+            }
+        } catch (e) {
+            alert('抓取请求异常：' + e.message);
+        } finally {
+            this.disabled = false;
+            this.innerHTML = '手动触发抓取';
+        }
+    });
+
+    async function searchTopic(keyword) {
+        try {
+            // 弹出 modal 并显示加载提示
+            currentTopicContent = "";
+            currentTopicTitle = keyword;
+            document.getElementById("topicModalContent").textContent = "🔎 检索中，请稍候...";
+            const modal = new bootstrap.Modal(document.getElementById("topicModal"));
+            modal.show();
+
+            // 发起请求
+            const response = await fetch(`/api/search-topic?keyword=${encodeURIComponent(keyword)}`);
+            const result = await response.json();
+
+            if (result.code === 200 && result.data.length > 0) {
+                let content = "";
+                result.data.forEach((note, idx) => {
+                    content += `【${idx+1}】${note.title}\n${note.desc}\n\n`;
+                });
+
+                currentTopicContent = content;
+                document.getElementById("topicModalContent").textContent = content;
+
+            } else {
+                document.getElementById("topicModalContent").textContent = "⚠️ 未找到相关内容";
+            }
+        } catch (e) {
+            document.getElementById("topicModalContent").textContent = "❌ 检索请求异常：" + e.message;
+        }
+    }
+
+    async function viewTopic(keyword) {
+        try {
+            const response = await fetch(`/api/view-topic?keyword=${encodeURIComponent(keyword)}`);
+            const result = await response.json();
+
+            if (result.code === 200 && result.data.length > 0) {
+                let content = "";
+                result.data.forEach((note, idx) => {
+                    content += `【${idx+1}】${note.title}\n${note.desc}\n\n`;
+                });
+
+                currentTopicContent = content;
+                currentTopicTitle = keyword;
+                document.getElementById("topicModalContent").textContent = content;
+                new bootstrap.Modal(document.getElementById("topicModal")).show();
+
+            } else {
+                alert("没有该话题");
+            }
+        } catch (e) {
+            alert("查看话题请求异常：" + e.message);
+        }
+    }
+
+    async function aiSummary() {
+        if (!currentTopicContent) {
+            alert("没有可总结的内容");
+            return;
+        }
+        document.getElementById("topicModalContent").textContent = "🤖 AI 总结中，请稍候...";
+        try {
+            const response = await fetch("/api/ai-summary", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ content: currentTopicContent, topic: currentTopicTitle })
+            });
+            const result = await response.json();
+            if (result.code === 200) {
+                document.getElementById("topicModalContent").textContent =
+                    "🤖 AI 总结结果：\n\n" + result.data.summary;
+            } else {
+                document.getElementById("topicModalContent").textContent =
+                    "❌ AI 总结失败：" + result.msg;
+            }
+        } catch (e) {
+            document.getElementById("topicModalContent").textContent =
+                "❌ 请求异常：" + e.message;
+        }
+    }
+</script>
+
+<script>
+    // ================== 定时抓取成功提示 ==================
+    // 监听后端事件
+    const evtSource = new EventSource("/events");
+
+    evtSource.onmessage = function(event) {
+        const time = event.data;
+        showScheduleSuccessModal(time);
+    };
+
+    function showScheduleSuccessModal(time) {
+        const html = `
+        <div class="modal fade" id="scheduleSuccessModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">定时抓取成功</h5>
+            </div>
+            <div class="modal-body">
+                <p>定时抓取已完成</p>
+                <p class="text-muted">完成时间：${time}</p>
+                <p>是否刷新页面查看最新数据？</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="location.reload()">刷新页面</button>
+            </div>
+            </div>
+        </div>
+        </div>
+        `;
+        document.body.insertAdjacentHTML("beforeend", html);
+        new bootstrap.Modal(document.getElementById("scheduleSuccessModal")).show();
+    }
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>每日热点报告 - 小红书监控工具</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">小红书热点监控工具</a>
+            <a href="/" class="btn btn-light">返回热点榜单</a>
+        </div>
+    </nav>
+
+    <div class="container mt-5">
+        <!-- 显示已有日报 -->
+        <h2>
+            {% if is_history %}
+                📜 历史热点报告（{{ today }}）
+            {% else %}
+                📌 每日热点报告（{{ today }}）
+            {% endif %}
+        </h2>
+        <form method="get" action="/report" class="row g-2 align-items-center mt-3">
+            <div class="col-auto">
+                <input
+                    type="date"
+                    name="date"
+                    class="form-control"
+                    value="{{ today }}"
+                >
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-outline-secondary">
+                    📅 查看历史日报
+                </button>
+            </div>
+        
+            {% if is_history %}
+            <div class="col-auto">
+                <a href="/report" class="btn btn-link">
+                    ⏪ 返回今天
+                </a>
+            </div>
+            {% endif %}
+        </form>
+        {% if report_data %}  
+            <p class="text-muted">生成时间：{{ report_data.generate_time }}</p>
+            <p class="text-muted">当日热点总数：{{ report_data.topic_count }} 个</p>
+
+            <div class="card mt-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">整体趋势总结</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">{{ report_data.overall_analysis }}</p>
+                </div>
+            </div>
+
+        {% else %}
+            {% if is_history %}
+                <div class="alert alert-secondary mt-3">
+                    📭 暂无 {{ today }} 的历史日报
+                </div>
+            {% else %}
+                <div class="alert alert-info mt-3">
+                    📭 暂无 {{ today }} 的每日报告，请点击下方按钮生成
+                </div>
+            {% endif %}
+        {% endif %}
+
+        {% if is_history and report_data %}
+            <div class="mt-3">
+                <button id="compareReportBtn" class="btn btn-warning">
+                    🔍 对比今天与历史日报
+                </button>
+                <p id="compareStatus" class="text-muted mt-2"></p>
+            </div>
+
+            <div id="compareReportContainer" class="mt-4" style="display:none;">
+                <div class="card mt-2">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">📊 历史 vs 今天 日报对比分析</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text" id="compareReportContent" style="white-space: pre-wrap; font-size: 1rem; line-height: 1.5; color: #212529;"></p>
+                    </div>
+                </div>
+            </div>           
+        {% endif %}
+
+            
+        {% if not is_history %}
+        <!-- 生成日报按钮 -->
+        <div class="mt-4">
+            <button id="generateReportBtn" class="btn btn-primary">
+                🧠 生成当日热点报告
+            </button>
+            <p id="reportStatus" class="text-muted mt-2"></p>
+        </div>
+
+        <div id="newReportContainer" class="mt-4" style="display:none;">
+            <h3>生成的每日热点报告</h3>
+            <div class="card mt-2">
+                <div class="card-body">
+                    <pre id="newReportContent" style="white-space: pre-wrap;"></pre>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const btn = document.getElementById('generateReportBtn');
+        const status = document.getElementById('reportStatus');
+        const newReportContainer = document.getElementById('newReportContainer');
+        const newReportContent = document.getElementById('newReportContent');
+
+        if(btn){
+            btn.addEventListener('click', async () => {
+                status.textContent = "🤖 正在生成日报，请稍候...";
+                btn.disabled = true;
+
+                try {
+                    const response = await fetch("/api/generate-daily-report", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({ date: "{{ today }}" })
+                    });
+                    const result = await response.json();
+
+                    if(result.code === 200) {
+                        status.textContent = "✅ 日报生成成功！";
+                        newReportContainer.style.display = "block";
+                        newReportContent.textContent = result.data.overall_analysis;
+                    } else {
+                        status.textContent = "❌ " + result.msg;
+                    }
+                } catch(e) {
+                    status.textContent = "❌ 请求异常：" + e.message;
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        }
+
+        const compareBtn = document.getElementById('compareReportBtn');
+        const compareStatus = document.getElementById('compareStatus');
+        const compareContainer = document.getElementById('compareReportContainer');
+        const compareContent = document.getElementById('compareReportContent');
+
+        if(compareBtn) {
+            compareBtn.addEventListener('click', async () => {
+                compareStatus.textContent = "🔄 正在对比日报，请稍候...";
+                compareBtn.disabled = true;
+
+                try {
+                    // 检查今天日报是否存在
+                    const todayResponse = await fetch("/api/get-today-report");
+                    const todayResult = await todayResponse.json();
+
+                    if(todayResult.code !== 200 || !todayResult.data) {
+                        compareStatus.textContent = "⚠️ 先生成今日日报再进行对比！";
+                        return;
+                    }
+
+                    // 调用对比接口
+                    const response = await fetch("/api/compare-reports", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            today_report: todayResult.data.overall_analysis,
+                            history_report: `{{ report_data.overall_analysis | default("") | tojson | safe }}`
+                        })
+                    });
+
+                    const result = await response.json();
+                    if(result.code === 200) {
+                        compareStatus.textContent = "✅ 对比完成！";
+                        compareContainer.style.display = "block";
+                        compareContent.textContent = result.data.comparison_analysis;
+                    } else {
+                        compareStatus.textContent = "❌ " + result.msg;
+                    }
+
+                } catch(e) {
+                    compareStatus.textContent = "❌ 请求异常：" + e.message;
+                } finally {
+                    compareBtn.disabled = false;
+                }
+            });
+        }
+    </script>
+</body>
+</html>

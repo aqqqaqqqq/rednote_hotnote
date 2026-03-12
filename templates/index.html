@@ -6,8 +6,9 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
+<body>
 
-<!-- 模态框：查看话题 + AI总结 -->
+<!-- 模态框：查看话题 + AI总结 (移入到body内部，符合HTML规范) -->
 <div class="modal fade" id="topicModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
@@ -26,7 +27,6 @@
     </div>
 </div>  
 
-<body>
 <nav class="navbar navbar-dark bg-primary">
     <div class="container">
         <a class="navbar-brand" href="/">小红书热点监控工具</a>
@@ -97,9 +97,7 @@
 <script>
     let currentTopicContent = "";
     let currentTopicTitle = "";
-</script>
 
-<script>
     // 手动触发抓取
     document.getElementById('forceCrawlBtn').addEventListener('click', async function () {
         this.disabled = true;
@@ -123,17 +121,23 @@
         }
     });
 
+    // 检索话题
     async function searchTopic(keyword) {
         try {
-            // 弹出 modal 并显示加载提示
             currentTopicContent = "";
             currentTopicTitle = keyword;
-            document.getElementById("topicModalContent").textContent = "🔎 检索中，请稍候...";
+            document.getElementById("topicModalContent").textContent = "🔎 检索中，这可能需要几十秒，请耐心稍候...";
             const modal = new bootstrap.Modal(document.getElementById("topicModal"));
             modal.show();
 
-            // 发起请求
             const response = await fetch(`/api/search-topic?keyword=${encodeURIComponent(keyword)}`);
+            
+            // 防护：检查返回的是否为 JSON
+            const contentType = response.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+                throw new Error("服务器返回了异常网页页面，而非数据。");
+            }
+
             const result = await response.json();
 
             if (result.code === 200 && result.data.length > 0) {
@@ -141,21 +145,27 @@
                 result.data.forEach((note, idx) => {
                     content += `【${idx+1}】${note.title}\n${note.desc}\n\n`;
                 });
-
                 currentTopicContent = content;
                 document.getElementById("topicModalContent").textContent = content;
-
             } else {
-                document.getElementById("topicModalContent").textContent = "⚠️ 未找到相关内容";
+                document.getElementById("topicModalContent").textContent = `⚠️ ${result.msg || "未找到相关内容"}`;
             }
         } catch (e) {
             document.getElementById("topicModalContent").textContent = "❌ 检索请求异常：" + e.message;
         }
     }
 
+    // 🌟 重点修改：查看话题
     async function viewTopic(keyword) {
         try {
             const response = await fetch(`/api/view-topic?keyword=${encodeURIComponent(keyword)}`);
+            
+            // 🌟 防护1：判断服务器返回的是否是 JSON。如果是HTML，直接抛出容易理解的错误
+            const contentType = response.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+                throw new Error("服务器接口异常或未启动，返回了网页文档");
+            }
+
             const result = await response.json();
 
             if (result.code === 200 && result.data.length > 0) {
@@ -168,21 +178,27 @@
                 currentTopicTitle = keyword;
                 document.getElementById("topicModalContent").textContent = content;
                 new bootstrap.Modal(document.getElementById("topicModal")).show();
-
             } else {
-                alert("没有该话题");
+                // 🌟 防护2：使用后端传回来的 msg 友善提示，而不是生硬的 "没有该话题"
+                alert(result.msg || "暂无该话题数据");
             }
         } catch (e) {
-            alert("查看话题请求异常：" + e.message);
+            // 🌟 防护3：捕获到任何错误，给予友好的中文提示
+            if (e.message.includes("Unexpected token") || e.message.includes("is not valid JSON")) {
+                alert("查看话题失败：后台返回了非标准数据，请检查后台日志。");
+            } else {
+                alert("查看话题请求异常：" + e.message);
+            }
         }
     }
 
+    // AI总结
     async function aiSummary() {
         if (!currentTopicContent) {
             alert("没有可总结的内容");
             return;
         }
-        document.getElementById("topicModalContent").textContent = "🤖 AI 总结中，请稍候...";
+        document.getElementById("topicModalContent").textContent = "🤖 AI 正在思考中，请稍候...";
         try {
             const response = await fetch("/api/ai-summary", {
                 method: "POST",
@@ -202,11 +218,8 @@
                 "❌ 请求异常：" + e.message;
         }
     }
-</script>
 
-<script>
     // ================== 定时抓取成功提示 ==================
-    // 监听后端事件
     const evtSource = new EventSource("/events");
 
     evtSource.onmessage = function(event) {
@@ -215,6 +228,9 @@
     };
 
     function showScheduleSuccessModal(time) {
+        // 如果页面上已经有这个弹窗，就不重复添加了
+        if(document.getElementById("scheduleSuccessModal")) return;
+
         const html = `
         <div class="modal fade" id="scheduleSuccessModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
@@ -228,6 +244,7 @@
                 <p>是否刷新页面查看最新数据？</p>
             </div>
             <div class="modal-footer">
+                <button class="btn btn-secondary" data-bs-dismiss="modal">暂不刷新</button>
                 <button class="btn btn-primary" onclick="location.reload()">刷新页面</button>
             </div>
             </div>
@@ -237,7 +254,6 @@
         document.body.insertAdjacentHTML("beforeend", html);
         new bootstrap.Modal(document.getElementById("scheduleSuccessModal")).show();
     }
-
 </script>
 
 </body>

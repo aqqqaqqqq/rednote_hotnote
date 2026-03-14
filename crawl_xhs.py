@@ -11,6 +11,11 @@ from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 from openai import OpenAI
 
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+from model.model_lora import apply_lora, load_lora
+
 # 假设你的 main.py 中有异步爬虫入口
 from main import main as crawl_main  
 
@@ -40,6 +45,23 @@ client = OpenAI(
 # 全局状态
 LAST_SCHEDULE_STATUS = {"success": False, "time": None}
 sse_clients =[] # 用于SSE通知客户端
+USE_LOCAL_MODEL = True # 是否使用本地模型
+
+# 本地大模型加载
+MODEL = None
+TOKENIZER = None
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+def init_local_model():
+    global MODEL, TOKENIZER
+    print("🔄 正在加载本地模型...")
+    model_path = "./MiniMind2"
+    TOKENIZER = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    MODEL = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        trust_remote_code=True
+    ).to(DEVICE)
+    MODEL.eval()
+    print("✅ 本地模型加载完成")
 
 # ==========================================
 # 2. 通用工具函数 (Utils)
@@ -71,6 +93,37 @@ def save_ai_summaries(data, date_str=None):
 
 def load_report(date_str=None):
     return load_from_json(os.path.join(DAILY_REPORT_DIR, f"report_{get_date_str(date_str)}.json"))
+
+def local_llm_generate(prompt, max_new_tokens=512):
+    global MODEL, TOKENIZER
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    inputs = TOKENIZER.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    inputs = TOKENIZER(
+        inputs,
+        return_tensors="pt"
+    ).to(DEVICE)
+    with torch.no_grad():
+        outputs = MODEL.generate(
+            inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            repetition_penalty=1.2,
+            no_repeat_ngram_size=3
+        )
+    response = TOKENIZER.decode(
+        outputs[0][len(inputs["input_ids"][0]):],
+        skip_special_tokens=True
+    )
+    return response.strip()
 
 # ==========================================
 # 3. 核心服务：数据抓取 (Crawler Services)
@@ -125,12 +178,15 @@ def ai_analyze_content(content_list, topic_title):
     分析要求：1. 提炼核心观点和用户偏好 2. 总结内容呈现形式的共性 3. 语言简洁，符合小红书平台调性
     """
     try:
-        res = client.chat.completions.create(
-            model="qwen3-max",
-            messages=[{"role": "system", "content": "你是专业的小红书热点内容分析师"}, {"role": "user", "content": prompt}],
-            temperature=0.3, max_tokens=500
-        )
-        return res.choices[0].message.content.strip()
+        if USE_LOCAL_MODEL:
+            return local_llm_generate(prompt, 256)
+        else:
+            res = client.chat.completions.create(
+                model="qwen3-max",
+                messages=[{"role": "system", "content": "你是专业的小红书热点内容分析师"}, {"role": "user", "content": prompt}],
+                temperature=0.3, max_tokens=500
+            )
+            return res.choices[0].message.content.strip()
     except Exception as e:
         return f"AI分析异常：{str(e)}"
 
@@ -141,15 +197,19 @@ def generate_daily_report_from_ai(ai_summaries):
     要求：1. 总结核心方向 2. 分析用户关注点 3. 提炼3-5条运营建议 4. 500字内。
     """
     try:
-        res = client.chat.completions.create(
-            model="qwen3-max",
-            messages=[{"role": "system", "content": "你是专业分析师"}, {"role": "user", "content": prompt}],
-            temperature=0.4, max_tokens=800
-        )
+        if USE_LOCAL_MODEL:
+            result = local_llm_generate(prompt, 512)
+        else:
+            res = client.chat.completions.create(
+                model="qwen3-max",
+                messages=[{"role": "system", "content": "你是专业分析师"}, {"role": "user", "content": prompt}],
+                temperature=0.4, max_tokens=800
+            )
+            result = res.choices[0].message.content.strip()
         report_data = {
             "report_date": date.today().strftime("%Y-%m-%d"),
             "generate_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "overall_analysis": res.choices[0].message.content.strip(),
+            "overall_analysis": result,
             "topic_count": len(ai_summaries)
         }
         save_to_json(report_data, os.path.join(DAILY_REPORT_DIR, f"report_{get_date_str()}.json"))
@@ -280,7 +340,7 @@ def ai_summary():
     content_text, topic, report_date = data.get("content", "").strip(), data.get("topic", "").strip(), data.get("date")
     if not content_text or not topic: return jsonify({"code": 400, "msg": "内容或关键词为空"})
 
-    content_list =[{"content_summary": line} for line in content_text.split("\n") if line.strip()]
+    content_list =[{"content_summary": line} for line in content_text.split("\n")[:20] if line.strip()]
     summary = ai_analyze_content(content_list, topic)
 
     summaries = load_ai_summaries(report_date)
@@ -302,6 +362,8 @@ def generate_daily_report_api():
 # 8. 启动服务 (Entry Point)
 # ==========================================
 if __name__ == '__main__':
+    if USE_LOCAL_MODEL:
+        init_local_model()
     Thread(target=start_schedule, daemon=True).start()
     print("🚀 小红书热点监控工具Web服务已启动：http://127.0.0.1:5000")
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False) 

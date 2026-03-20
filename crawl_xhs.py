@@ -13,8 +13,6 @@ from openai import OpenAI
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from model.model_lora import apply_lora, load_lora
 
 # 假设你的 main.py 中有异步爬虫入口
 from main import main as crawl_main  
@@ -46,22 +44,36 @@ client = OpenAI(
 LAST_SCHEDULE_STATUS = {"success": False, "time": None}
 sse_clients =[] # 用于SSE通知客户端
 USE_LOCAL_MODEL = True # 是否使用本地模型
+LOCAL_MODEL_CONFIG = {
+    "active": "qwen",   # "qwen" or "minimind"
+    "models": {
+        "minimind": "./models/MiniMind2",
+        "qwen": "./models/Qwen3.5_0.8B",
+    }
+}
 
 # 本地大模型加载
 MODEL = None
 TOKENIZER = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+def get_local_model_settings():
+    model_type = LOCAL_MODEL_CONFIG["active"]
+    model_path = LOCAL_MODEL_CONFIG["models"][model_type]
+    return model_type, model_path
+
 def init_local_model():
     global MODEL, TOKENIZER
+    model_type, model_path = get_local_model_settings()
     print("🔄 正在加载本地模型...")
-    model_path = "./MiniMind2"
     TOKENIZER = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     MODEL = AutoModelForCausalLM.from_pretrained(
         model_path,
-        trust_remote_code=True
+        trust_remote_code=True,
+        torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32
     ).to(DEVICE)
     MODEL.eval()
-    print("✅ 本地模型加载完成")
+    print(f"✅ 本地模型加载完成: type={model_type}, path={model_path}, device={DEVICE}")
 
 # ==========================================
 # 2. 通用工具函数 (Utils)

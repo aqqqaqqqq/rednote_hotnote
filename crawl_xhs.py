@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import asyncio
@@ -14,7 +15,11 @@ from openai import OpenAI
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# 假设你的 main.py 中有异步爬虫入口
+# 让抓取框架代码统一保留在 MediaCrawler 子目录中
+FRAMEWORK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MediaCrawler")
+if FRAMEWORK_DIR not in sys.path:
+    sys.path.insert(0, FRAMEWORK_DIR)
+
 from main import main as crawl_main  
 
 # ==========================================
@@ -43,7 +48,8 @@ client = OpenAI(
 # 全局状态
 LAST_SCHEDULE_STATUS = {"success": False, "time": None}
 sse_clients =[] # 用于SSE通知客户端
-USE_LOCAL_MODEL = True # 是否使用本地模型
+USE_LOCAL_MODEL = False # 是否使用本地模型
+USE_VLM_FOR_SUMMARY = True # 是否使用多模态模型做话题总结
 LOCAL_MODEL_CONFIG = {
     "active": "qwen",   # "qwen" or "minimind"
     "models": {
@@ -105,6 +111,40 @@ def save_ai_summaries(data, date_str=None):
 
 def load_report(date_str=None):
     return load_from_json(os.path.join(DAILY_REPORT_DIR, f"report_{get_date_str(date_str)}.json"))
+
+def load_topic_search_data(date_str=None):
+    target_date = get_date_str(date_str, format="%Y-%m-%d")
+    json_file = os.path.join(DATA_DIR, f"xhs/json/search_contents_{target_date}.json")
+    return load_from_json(json_file) or []
+
+def get_topic_notes(topic, date_str=None):
+    keyword = (topic or "").strip().lower()
+    if not keyword:
+        return []
+
+    notes = []
+    for note in load_topic_search_data(date_str):
+        source_kw = (note.get("source_keyword") or "").strip().lower()
+        if source_kw == keyword:
+            notes.append(note)
+    return notes
+
+def extract_image_urls_from_notes(notes, max_images=6):
+    image_urls = []
+    for note in notes:
+        raw_images = note.get("image_list") or note.get("images_list") or ""
+        if isinstance(raw_images, list):
+            candidates = raw_images
+        else:
+            candidates = str(raw_images).split(",")
+
+        for image_url in candidates:
+            clean_url = str(image_url).strip()
+            if clean_url and clean_url.startswith(("http://", "https://")) and clean_url not in image_urls:
+                image_urls.append(clean_url)
+            if len(image_urls) >= max_images:
+                return image_urls
+    return image_urls
 
 def local_llm_generate(prompt, max_new_tokens=512):
     global MODEL, TOKENIZER
@@ -201,6 +241,95 @@ def ai_analyze_content(content_list, topic_title):
             return res.choices[0].message.content.strip()
     except Exception as e:
         return f"AI分析异常：{str(e)}"
+
+def ai_analyze_content_with_qwen_vl(content_list, topic_title, image_urls=None, enable_thinking=False):
+    if not content_list:
+        return "暂无足够内容进行分析。"
+
+    image_urls = image_urls or []
+    text_blocks = []
+    for idx, item in enumerate(content_list[:12], start=1):
+        title = (item.get("title") or "").strip()
+        desc = (item.get("content_summary") or "").strip()
+        content_block = f"{idx}. 标题：{title}\n内容：{desc}".strip()
+        text_blocks.append(content_block)
+
+    prompt = (
+        f"请你作为小红书热点分析师，结合给定图片和文本内容，对「{topic_title}」做话题总结。\n"
+        "输出要求：\n"
+        "1. 总结该话题的核心内容方向。\n"
+        "2. 提炼用户关注点、视觉风格或内容表达特点。\n"
+        "3. 给出 2-3 条适合运营或选题的启发。\n"
+        "4. 输出控制在 300 字内，语言自然、简洁。\n\n"
+        f"文本素材：\n{chr(10).join(text_blocks)}"
+    )
+
+    message_content = [{"type": "text", "text": prompt}]
+    for image_url in image_urls[:6]:
+        message_content.append({
+            "type": "image_url",
+            "image_url": {"url": image_url}
+        })
+
+    try:
+        completion = client.chat.completions.create(
+            model="qwen3-vl-plus",
+            messages=[{"role": "user", "content": message_content}],
+            extra_body={
+                "enable_thinking": enable_thinking,
+                "thinking_budget": 8192
+            }
+        )
+        return (completion.choices[0].message.content or "").strip()
+    except Exception as e:
+        return f"Qwen_VL 分析异常：{str(e)}"
+
+def build_summary_content_list(topic, report_date=None, content_text=""):
+    topic_notes = get_topic_notes(topic, report_date)
+    content_list = []
+
+    if topic_notes:
+        for note in topic_notes[:12]:
+            content_list.append({
+                "title": note.get("title", ""),
+                "content_summary": note.get("desc", "")
+            })
+    elif content_text:
+        content_list = [
+            {"title": "", "content_summary": line}
+            for line in content_text.split("\n")[:20]
+            if line.strip()
+        ]
+
+    return topic_notes, content_list
+
+def generate_topic_summary(topic, report_date=None, content_text="", enable_thinking=False, max_images=6):
+    topic_notes, content_list = build_summary_content_list(topic, report_date, content_text)
+    if not content_list:
+        return None
+
+    image_urls = extract_image_urls_from_notes(topic_notes, max_images=max_images)
+
+    if USE_VLM_FOR_SUMMARY:
+        summary = ai_analyze_content_with_qwen_vl(
+            content_list=content_list,
+            topic_title=topic,
+            image_urls=image_urls,
+            enable_thinking=enable_thinking
+        )
+        model_name = "qwen3-vl-plus"
+    else:
+        summary = ai_analyze_content(content_list, topic)
+        model_name = LOCAL_MODEL_CONFIG["active"] if USE_LOCAL_MODEL else "qwen3-max"
+
+    return {
+        "topic": topic,
+        "summary": summary,
+        "model": model_name,
+        "image_urls": image_urls if USE_VLM_FOR_SUMMARY else [],
+        "image_count": len(image_urls) if USE_VLM_FOR_SUMMARY else 0,
+        "mode": "vlm" if USE_VLM_FOR_SUMMARY else "llm"
+    }
 
 def generate_daily_report_from_ai(ai_summaries):
     prompt = f"""
@@ -306,14 +435,9 @@ def view_topic():
         return jsonify({"code": 400, "msg": "未提供关键词", "data":[]})
 
     try:
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        json_file = os.path.join(DATA_DIR, f"xhs/json/search_contents_{today_str}.json")
-
-        if not os.path.exists(json_file):
+        data_list = load_topic_search_data()
+        if not data_list:
             return jsonify({"code": 404, "msg": "今天暂未检索过任何话题，请先点击【检索话题】抓取数据", "data":[]})
-
-        with open(json_file, 'r', encoding='utf-8') as f:
-            data_list = json.load(f)
 
         results =[]
         for note in data_list:
@@ -340,26 +464,49 @@ def search_topic():
     
     run_crawler(keyword)
     
-    json_file = os.path.join(DATA_DIR, f"xhs/json/search_contents_{get_date_str(format='%Y-%m-%d')}.json")
-    data_list = load_from_json(json_file) or[]
+    data_list = load_topic_search_data()
     
     results =[{"title": n.get("title"), "desc": n.get("desc")} for n in data_list if keyword.lower() in n.get("source_keyword", "").lower()]
     return jsonify({"code": 200, "msg": "成功", "data": results})
 
 @app.route("/api/ai-summary", methods=["POST"])
+@app.route("/api/ai-summary-vl", methods=["POST"])
 def ai_summary():
     data = request.json
-    content_text, topic, report_date = data.get("content", "").strip(), data.get("topic", "").strip(), data.get("date")
-    if not content_text or not topic: return jsonify({"code": 400, "msg": "内容或关键词为空"})
+    content_text = data.get("content", "").strip()
+    topic = data.get("topic", "").strip()
+    report_date = data.get("date")
+    enable_thinking = bool(data.get("enable_thinking", False))
+    max_images = int(data.get("max_images", 6) or 6)
 
-    content_list =[{"content_summary": line} for line in content_text.split("\n")[:20] if line.strip()]
-    summary = ai_analyze_content(content_list, topic)
+    if not topic:
+        return jsonify({"code": 400, "msg": "关键词为空"})
+
+    summary_data = generate_topic_summary(
+        topic=topic,
+        report_date=report_date,
+        content_text=content_text,
+        enable_thinking=enable_thinking,
+        max_images=max_images
+    )
+    if not summary_data:
+        return jsonify({"code": 404, "msg": "未找到可用于总结的话题内容，请先检索话题"})
 
     summaries = load_ai_summaries(report_date)
-    summaries[topic] = {"summary": summary, "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    summaries[topic] = {
+        "summary": summary_data["summary"],
+        "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "model": summary_data["model"],
+        "mode": summary_data["mode"],
+        "image_count": summary_data["image_count"]
+    }
     save_ai_summaries(summaries, report_date)
 
-    return jsonify({"code": 200, "msg": "AI总结成功", "data": {"topic": topic, "summary": summary}})
+    return jsonify({
+        "code": 200,
+        "msg": "AI总结成功",
+        "data": summary_data
+    })
 
 @app.route('/api/generate-daily-report', methods=['POST'])
 def generate_daily_report_api():

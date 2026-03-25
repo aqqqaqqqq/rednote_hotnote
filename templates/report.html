@@ -127,7 +127,7 @@
         document.addEventListener("DOMContentLoaded", () => {
             
             // 将后端的 Jinja 变量安全地转入 JavaScript，避免出现引号换行导致的语法错误
-            const currentHistoryReport = JSON.parse('{{ report_data.overall_analysis | default("") | tojson }}');
+            const currentHistoryReport = {{ report_data.overall_analysis | default("", true) | tojson }};
 
             // ================== 生成日报逻辑 ==================
             const generateBtn = document.getElementById('generateReportBtn');
@@ -182,7 +182,7 @@
                         const todayResult = await todayResponse.json();
 
                         if(todayResult.code !== 200 || !todayResult.data) {
-                            compareStatus.textContent = "⚠️ 先生成今日日报后再进行对比！";
+                            compareStatus.textContent = todayResult.msg || "今日未生成日报，请先生成日报。";
                             compareBtn.disabled = false;
                             return;
                         }

@@ -21,10 +21,13 @@ python -m crawl_xhs
 1. 抓取小红书热点榜单
 2. 定时抓取
 3. 抓取热点下的话题图文
-4. AI分析抓取的话题（minimind / Qwen3.5 / Qwen3-max / Qwen3-VL）
+4. AI总结抓取的热点话题
+   1. 本地模型（minimind / Qwen3.5）
+   2. API 接口（Qwen3-max / Qwen3-VL）
+
 5. 查看每日报告与历史报告
 6. 生成当日报告
-7. 对比每日报告
+7. 对比历史报告变化趋势
 
 #### 参考接口
 

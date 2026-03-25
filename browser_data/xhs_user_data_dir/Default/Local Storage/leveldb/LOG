@@ -1,8 +1,0 @@
-2026/03/25-16:21:10.929 50bc Reusing MANIFEST D:\5-3研二\0\小红书热点\hotnote\browser_data\xhs_user_data_dir\Default\Local Storage\leveldb/MANIFEST-000001
-2026/03/25-16:21:10.958 50bc Recovering log #3
-2026/03/25-16:21:10.960 50bc Level-0 table #3: started
-2026/03/25-16:21:10.975 50bc Level-0 table #3: 22937 bytes OK
-2026/03/25-16:21:10.976 50bc Recovering log #4
-2026/03/25-16:21:10.989 50bc Reusing old log D:\5-3研二\0\小红书热点\hotnote\browser_data\xhs_user_data_dir\Default\Local Storage\leveldb/000004.log 
-2026/03/25-16:21:10.991 50bc Delete type=0 #3
-2026/03/25-16:21:10.991 50bc Delete type=2 #5

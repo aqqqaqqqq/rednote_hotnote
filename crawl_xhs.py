@@ -20,7 +20,7 @@ FRAMEWORK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MediaC
 if FRAMEWORK_DIR not in sys.path:
     sys.path.insert(0, FRAMEWORK_DIR)
 
-from main import main as crawl_main  
+from MediaCrawler.main import main as crawl_main  
 
 # ==========================================
 # 1. 初始化与配置 (Config & Init)

@@ -17,8 +17,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DAILY_REPORT_DIR = os.path.join(DATA_DIR, "daily_reports")
 AI_SUMMARIES_DIR = os.path.join(DATA_DIR, "ai_summaries")
+HOT_TOPIC_DIR = os.path.join(DATA_DIR, "hot_topic")
 
-for directory in [DATA_DIR, DAILY_REPORT_DIR, AI_SUMMARIES_DIR]:
+for directory in [DATA_DIR, DAILY_REPORT_DIR, AI_SUMMARIES_DIR, HOT_TOPIC_DIR]:
     os.makedirs(directory, exist_ok=True)
 
 FRAMEWORK_DIR = os.path.join(BASE_DIR, "MediaCrawler")
@@ -119,6 +120,13 @@ def load_report(date_str=None):
         DAILY_REPORT_DIR, f"report_{get_date_str(date_str)}.json"
     )
     return load_from_json(file_path)
+
+
+def get_hot_topic_archive_path(date_str=None):
+    # 返回按日期归档的热榜文件路径。
+    return os.path.join(
+        HOT_TOPIC_DIR, f"hot_topics_{get_date_str(date_str)}.json"
+    )
 
 
 def load_topic_search_data(date_str=None):
@@ -222,6 +230,7 @@ def crawl_xhs_hot_topics():
             "topics": topics,
         }
         save_to_json(hot_data, os.path.join(DATA_DIR, "hot_topics.json"))
+        save_to_json(hot_data, get_hot_topic_archive_path())
         print(f"热榜抓取成功，共 {len(topics)} 条")
         return hot_data
     except Exception as exc:

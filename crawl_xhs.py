@@ -7,6 +7,8 @@ from threading import Thread
 import schedule
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
+from xhs_agent import run_agent_instruction
+
 from xhs_services import (
     DATA_DIR,
     USE_LOCAL_MODEL,
@@ -259,6 +261,21 @@ def compare_reports_api():
             "data": {"comparison_analysis": comparison_analysis},
         }
     )
+
+
+@app.route("/api/agent", methods=["POST"])
+def agent_api():
+    data = request.json or {}
+    instruction = (data.get("instruction") or "").strip()
+
+    if not instruction:
+        return jsonify({"code": 400, "msg": "missing instruction"})
+
+    try:
+        result = run_agent_instruction(instruction)
+        return jsonify({"code": 200, "msg": "agent success", "data": result})
+    except Exception as exc:
+        return jsonify({"code": 500, "msg": f"agent failed: {exc}"})
 
 
 if __name__ == "__main__":
